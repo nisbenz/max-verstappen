@@ -4,4 +4,15 @@ version = "0.1.0"
 requires-python = ">=3.12"
 dependencies = [
     "gymnasium[box2d]>=1.0",
+    "torch>=2.14.1",
+    "triton-rocm ; sys_platform == 'linux'",
 ]
+
+[tool.uv.sources]
+torch = [{ index = "pytorch-rocm" }]
+triton-rocm = [{ index = "pytorch-rocm" }]
+
+[[tool.uv.index]]
+name = "pytorch-rocm"
+url = "https://download.pytorch.org/whl/rocm7.2"
+explicit = true
