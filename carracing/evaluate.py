@@ -4,6 +4,8 @@
     uv run python -m carracing.evaluate runs/<run>/best.pt --render
 """
 import argparse
+import multiprocessing as mp
+import signal
 
 import gymnasium as gym
 import numpy as np
@@ -12,6 +14,8 @@ import torch
 from carracing.driver import Driver
 
 TEST_SEEDS = (202, 42, 203)
+# Checkpoints are chosen on these, so the test seeds stay unseen until the end.
+VAL_SEEDS = tuple(range(1000, 1012))
 DNF_TIME = 70.0
 
 
@@ -41,6 +45,33 @@ def evaluate(driver: Driver, seeds=TEST_SEEDS, render: bool = False) -> dict:
         lap_time, total = run_lap(driver, seed, render=render)
         results[seed] = (lap_time, total)
     return results
+
+
+def _init_eval_worker():
+    # One episode per process: more CPU threads per process only fight each other.
+    torch.set_num_threads(1)
+    # Ctrl+C is handled by the training process, which stops cleanly; the pool must survive it.
+    signal.signal(signal.SIGINT, signal.SIG_IGN)
+
+
+def _run_seed(job):
+    state_dict, seed = job
+    driver = Driver()
+    driver.policy.load_state_dict(state_dict)
+    driver.eval()
+    return seed, run_lap(driver, seed)
+
+
+def make_eval_pool(n_workers: int):
+    """Process pool for `evaluate_parallel`. spawn, not fork: the parent holds a GPU context."""
+    return mp.get_context("spawn").Pool(n_workers, initializer=_init_eval_worker)
+
+
+def evaluate_parallel(pool, policy: torch.nn.Module, seeds) -> dict:
+    """Same result as `evaluate(Driver(policy), seeds)`, one episode per process, on CPU
+    like the organizer (GPU and CPU round differently, which changes the laps)."""
+    state_dict = {k: v.detach().cpu() for k, v in policy.state_dict().items()}
+    return dict(pool.map(_run_seed, [(state_dict, s) for s in seeds]))
 
 
 def score(results: dict) -> tuple[float, float]:
